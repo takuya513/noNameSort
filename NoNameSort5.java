@@ -5,18 +5,20 @@ import java.util.LinkedList;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 
-import noNameSort.NoNameSort4.MergeSortWorker;
 
 
 import tools.MyArrayUtil;
+/*
+ * volatile を使っている
+ */
 
 
 public class NoNameSort5<E extends Comparable> {
 	E[] array;
 	int threadsNum,arrayLength,pos = 0,first,mid;
-	volatile boolean[] isSorted,ori2;
+	//	volatile boolean[] isSorted;   //ソート完了部分と未完成部分の判定用
+	volatile boolean[] isSorted;   //ソート完了部分と未完成部分の判定用
 	ExecutorService executor;
 	LinkedList<Callable<Object>> workers;
 	int[] nextPos;//次のmiddle or right を覚えておく配列
@@ -35,16 +37,17 @@ public class NoNameSort5<E extends Comparable> {
 		arrayLength = array.length;
 		isSorted = new boolean[arrayLength];
 		nextPos = new int[arrayLength];
+		
+		Arrays.fill(nextPos, -1);
 
-		Arrays.fill(isSorted,true);
-		executor = Executors.newFixedThreadPool(4);
+		//executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+		executor = Executors.newFixedThreadPool(1);
 		workers = new LinkedList<Callable<Object>>();
 
-		//第一段階、最初に4パターンに分かれている配列をマージしていき、すべて一パターンの配列にする
-		first();
-		//ここまでできたらテスト
+		//最初に4パターンに分かれている配列をマージしていき、すべて一パターンの配列にする
+		makingWork();
+
 		try {
-			System.out.println("INTO");
 			printAll();
 			executor.invokeAll(workers);
 			executor.shutdown();
@@ -57,17 +60,11 @@ public class NoNameSort5<E extends Comparable> {
 	}
 
 
-	private synchronized void printAll() {
-		//System.out.println(+num+"    left : "+left+"  right : "+right+" id : "+id+"num : "+num);
-		MyArrayUtil.print(array);
-		MyArrayUtil.print(nextPos);
-		printBoolean();
-		System.out.println();
-	}
+
 
 
 	@SuppressWarnings("unchecked")
-	public void first(){
+	public void makingWork(){
 		int pattern,left = 0,num = 0;
 		//大きい枠組み
 		while(pos <= arrayLength - 1){
@@ -78,10 +75,10 @@ public class NoNameSort5<E extends Comparable> {
 					pattern = pattern * (i + 1);
 					//どこまで上に上がるか
 					while(array[pos].compareTo(array[pos+1]) <= 0){
-						System.out.println("UPUP");
 						if(pos+1 >= arrayLength-1){
 							if(i == 0){
-								markBoolean(num,left,pos+1);//oxをつける
+								updateIsSorted(num,left,pos+1);//oxをつける
+								nextPos[pos+1] = left;
 								nextPos[left] = pos+1;//次のポジションの保存
 								workers.add(Executors.callable(new MergeSortWorker(left,pos+1,num++)));
 								return;
@@ -101,7 +98,8 @@ public class NoNameSort5<E extends Comparable> {
 						if(pos+1 >= arrayLength-1){
 							if(i == 0){
 								reverse(left,pos+1);  //すべてが逆順のときだったので逆にして終了
-								markBoolean(num,left,pos+1);//oxをつける
+								updateIsSorted(num,left,pos+1);//oxをつける
+								nextPos[pos+1] = left;
 								nextPos[left] = pos+1;//次のポジションの保存
 								workers.add(Executors.callable(new MergeSortWorker(left,pos+1,num++)));
 								return;
@@ -113,7 +111,6 @@ public class NoNameSort5<E extends Comparable> {
 						}
 						pos++;
 					}
-
 				}
 
 				if(i == 0){  //まだ一週目なら様々な処理をする
@@ -122,8 +119,9 @@ public class NoNameSort5<E extends Comparable> {
 
 					if(pos == arrayLength - 1){
 						insertSort(left,pos);
-						markBoolean(num,left,pos);//oxをつける
+						updateIsSorted(num,left,pos);//oxをつける
 						workers.add(Executors.callable(new MergeSortWorker(left,pos,num++)));
+						nextPos[pos] = left;
 						nextPos[left] = pos;//次のポジションの保存
 						return;
 					}
@@ -132,12 +130,18 @@ public class NoNameSort5<E extends Comparable> {
 
 			//MergeSortWorkerに仕事を投げる
 			nextPos[left] = pos;//次のポジションの保存
+			nextPos[pos] = left; //前のポジションも保存
+			//			Arrays.fill(isSorted,left,mid+1,true);
+			//			Arrays.fill(isSorted,mid+1,pos+1,false);
 			markBooleanFirst(left,mid,pos);
+
+			System.out.println("left : "+left+"mid : "+mid+"  right : "+pos+"  num : "+num);
 			workers.add(Executors.callable(new MergeSortWorker(left,mid,pos,num++,pattern)));
 			pos++;  //次に進める
 			if(pos == arrayLength-1){
 				nextPos[pos] = pos;//次のポジションの保存
-				isSorted[pos] = true;
+				isSorted[pos] = true;   ///修正
+				System.out.println("left : "+pos+"  num : "+num);
 				workers.add(Executors.callable(new MergeSortWorker(pos,pos,num++)));
 				return;
 			}
@@ -163,7 +167,7 @@ public class NoNameSort5<E extends Comparable> {
 
 
 	class MergeSortWorker implements Runnable{
-		int num,nextRight;//id;
+		int num,nextRight,id;
 		int left,right,mid,pattern;
 		boolean isRest = false;
 
@@ -173,7 +177,7 @@ public class NoNameSort5<E extends Comparable> {
 			this.left = left;
 			this.mid = mid;
 			this.right = right;
-			//id = num;
+			id = num;
 
 		}
 
@@ -183,13 +187,14 @@ public class NoNameSort5<E extends Comparable> {
 			this.left = left;
 			this.right = right;
 			isRest = true;
-			//id = num;
+			id = num;
 		}
 
 
 		public void run(){
 			//printAll();
 
+			printAll("FIRST");
 			if(!isRest){   //余りの配列じゃなければ,はじめのソートを行う
 				switch(pattern){  //最初のマージだけは様々な形があるのでswitch文で処理
 				case UPUP:
@@ -208,56 +213,104 @@ public class NoNameSort5<E extends Comparable> {
 					break;
 
 				}
-
 			}
 
-			markBoolean(num,left,right);
+			updateIsSorted(num,left,right);
 
 			//一回目の処理が終われば次から順次ソートしていく
 			do{
 				//numが偶数か奇数で分ける
 				//偶数であれば
 				if(num % 2 == 0){
+					printAll();
 					//余りであれば　　　このrightがarrayLength - 1で判断する
 					if(right == arrayLength - 1){
 						//左側を監視し続ける
-						while(isSorted[left - 1] != isSorted[left]);
+						while(isSorted[left - 1] != isSorted[left]){
+							System.out.println("["+id+"] is wating");
+							printAll();
+							try {
+								Thread.sleep(1000);
+							} catch (InterruptedException e) {
+								// TODO 自動生成された catch ブロック
+								e.printStackTrace();
+							}
+						}
 						//左がoになったら
-						markBoolean(1,left,right);  //このbooleanをxにする
-						return;
-					}else{//余りでなければ
-						//右を監視し続ける
-						while(isSorted[right] == isSorted[right + 1]);
-						//右がxになったら
+						//updateIsSorted(1,left,right);  //このbooleanをxにする
 						//ソート範囲を拡大しmergeする
-						mid = right;
-						right = nextPos[mid+1];
+						mid = left - 1;
+						left = nextPos[mid];
+						
 						merge(left,mid,right);
 						if(left == 0 && right == arrayLength - 1)
 							return; //最後のソートであったら終了
-
-
+						
 						nextPos[left] = right;	//merge終わったらint[left] = rightに設定
 						num = num / 2;	//num = num / 2;
 
-						markBoolean(num,left,right);	//booleanを更新
+						updateIsSorted(num,left,right);	//booleanを更新
+					}else{//余りでなければ
+						//右のソートが終わっていれば
+						if(isSorted[right] != isSorted[right + 1]){
+
+							//右がxになったら
+							//ソート範囲を拡大しmergeする
+							mid = right;
+							right = nextPos[mid+1];
+							merge(left,mid,right);
+							printAll("GUUSUU");
+							if(left == 0 && right == arrayLength - 1)
+								return; //最後のソートであったら終了
+
+
+							nextPos[left] = right;	//merge終わったらint[left] = rightに設定
+							num = num / 2;	//num = num / 2;
+
+							updateIsSorted(num,left,right);	//booleanを更新
+
+						}else {//右のソートが終わっていなければ終了
+							return;//終了
+						}
+
 					}
-				}else {//奇数であれば
-					return;//終了
+				}else{  //奇数であれば
+					//左側を監視
+					if(isSorted[left - 1] != isSorted[left]){  //左のソートが終わっていれば
+						System.out.println("      OOD  : "+id);
+						//ソート範囲を拡大しmergeする
+						mid = left - 1;
+						left = nextPos[mid];
+						
+						merge(left,mid,right);
+						printAll("ODD");
+						if(left == 0 && right == arrayLength - 1)
+							return; //最後のソートであったら終了
+						
+						nextPos[right] = left;
+							num  = (num - 1) / 2;
+						
+						updateIsSorted(num,left,right);	//booleanを更新
+						
+					}else
+						return;
 				}
-			}while(true);
-
-
-
+				}while(true);
 		}
 
 
 
-
+		private synchronized void printAll() {
+			System.out.println(+num+"    left : "+left+"  right : "+right+"num : "+num);
+			MyArrayUtil.print(array);
+			MyArrayUtil.print(nextPos);
+			printBoolean();
+			System.out.println();
+		}
 
 		private synchronized void printAll(String st) {
 			System.out.println(num+ "      "+st);
-			//System.out.println(+num+"    left : "+left+"  right : "+right+" id : "+id+"num : "+num);
+			System.out.println(+num+"    left : "+left+"  right : "+right+" id : "+id+"num : "+num);
 			MyArrayUtil.print(array);
 			MyArrayUtil.print(nextPos);
 			printBoolean();
@@ -266,7 +319,14 @@ public class NoNameSort5<E extends Comparable> {
 
 	}
 
-	private synchronized void markBoolean(int num,int left,int right) {
+
+
+	private synchronized void updateIsSorted(int num,int left,int right) {
+		//		if(num%2 == 0)	//numが奇数だったらすべてにtrueを代入
+		//			Arrays.fill(isSorted,left,right+1,true);
+		//		else
+		//			Arrays.fill(isSorted,left,right+1,false);
+
 		if(num%2 == 0){	//numが奇数だったらすべてにtrueを代入
 			for(int i = left;i <= right;i++){
 				isSorted[i] = true;
@@ -279,12 +339,9 @@ public class NoNameSort5<E extends Comparable> {
 	}
 
 	private synchronized void markBooleanFirst(int left,int mid,int right) {
-		for(int i = left;i <= mid;i++){
-			isSorted[i] = true;
-		}
-		for(int i = mid+1;i <= right;i++){
-			isSorted[i] = false;
-		}
+		Arrays.fill(isSorted,left,mid+1,true);
+		Arrays.fill(isSorted,mid+1,right+1,false);
+
 	}
 
 
@@ -390,5 +447,11 @@ public class NoNameSort5<E extends Comparable> {
 		for(i = left;i <= right; i++)
 			array[i] = (E) buff[i - left];
 	}
-
+	private synchronized void printAll() {
+		//System.out.println(+num+"    left : "+left+"  right : "+right+" id : "+id+"num : "+num);
+		MyArrayUtil.print(array);
+		MyArrayUtil.print(nextPos);
+		printBoolean();
+		System.out.println();
+	}
 }
